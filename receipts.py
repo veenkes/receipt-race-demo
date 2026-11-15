@@ -21,7 +21,8 @@ CREATE TABLE IF NOT EXISTS receipts (
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     job_id TEXT NOT NULL REFERENCES jobs(id),
     kind TEXT NOT NULL CHECK (kind IN ('done', 'timeout')),
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT receipts_one_terminal_per_job UNIQUE (job_id)
 );
 """
 
@@ -41,9 +42,9 @@ def create_job(conn: psycopg.Connection, job_id: str) -> None:
 class ReceiptStore:
     """Persists terminal receipts for jobs.
 
-    after_check is a test seam. It runs after the "does a receipt already
-    exist?" read and before the write, so a test can hold both callers
-    there at the same time.
+    after_check is a test seam. In the race test it is a barrier, so both
+    callers reach the write at the same time. The write itself is atomic,
+    so that does not matter.
     """
 
     def __init__(
@@ -58,36 +59,29 @@ class ReceiptStore:
         """Record a terminal receipt if the job does not already have one.
 
         Returns True if this caller wrote the receipt, False if one already
-        existed.
+        existed. The unique constraint plus INSERT ... ON CONFLICT DO NOTHING
+        is a compare-and-swap: the check and the write are one statement.
         """
         if kind not in ("done", "timeout"):
             raise ValueError(f"unsupported receipt kind: {kind!r}")
 
+        # Optional test hook, kept so the race test can still start both
+        # writers together. It is not a check and does not affect the result.
+        if self._after_check is not None:
+            self._after_check()
+
         with self._conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT 1
-                  FROM receipts
-                 WHERE job_id = %s
-                 LIMIT 1
-                """,
-                (job_id,),
-            )
-            already_present = cur.fetchone() is not None
-            if self._after_check is not None:
-                self._after_check()
-            if already_present:
-                self._conn.commit()
-                return False
             cur.execute(
                 """
                 INSERT INTO receipts (job_id, kind)
                 VALUES (%s, %s)
+                ON CONFLICT (job_id) DO NOTHING
                 """,
                 (job_id, kind),
             )
+            wrote = cur.rowcount == 1
         self._conn.commit()
-        return True
+        return wrote
 
 
 def finish_stage(store: ReceiptStore, job_id: str) -> bool:
