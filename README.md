@@ -31,7 +31,7 @@ ON CONFLICT (job_id) DO NOTHING
 
 and checks `rowcount`. Only the first writer succeeds. The second is a no-op. There is no window between the check and the write because they are the same statement.
 
-The change lands on branch `fix/receipt-race`. The pull request for that branch will show the failing CI run on the test commit and the passing run on the fix commit. The PR link will be added here once it is open.
+The change lands in pull request [#1](https://github.com/veenkes/receipt-race-demo/pull/1). CI is red on the test commit (`e312c2f`, [failing run](https://github.com/veenkes/receipt-race-demo/actions/runs/43726904846)) and green on the fix commit (`1be9a78`, [passing run](https://github.com/veenkes/receipt-race-demo/actions/runs/43727002635)).
 
 ## How to run it
 
